@@ -65,18 +65,28 @@ def _format_for_platform(platform: str, generic: dict[str, Any]) -> dict[str, An
     fields = generic.get("data") or {}
 
     if platform == "discord":
-        embed = {
+        # Discord caps total embed payload at 6000 chars across title+description+fields.
+        # We budget conservatively: title ≤ 256, description ≤ 3500, fields share the rest.
+        embed: dict[str, Any] = {
             "title": title[:256],
-            "description": summary[:4000],
+            "description": summary[:3500],
             "color": 0xE74C3C if generic.get("type") == "alert" else 0x3498DB,
         }
         if url:
             embed["url"] = url
         if fields:
-            embed["fields"] = [
-                {"name": str(k)[:256], "value": str(v)[:1024], "inline": True}
-                for k, v in list(fields.items())[:10]
-            ]
+            remaining = max(0, 6000 - len(embed["title"]) - len(embed["description"]) - 64)
+            packed_fields = []
+            for k, v in list(fields.items())[:10]:
+                name = str(k)[:256]
+                value = str(v)[:1024]
+                cost = len(name) + len(value) + 8
+                if cost > remaining:
+                    break
+                remaining -= cost
+                packed_fields.append({"name": name, "value": value, "inline": True})
+            if packed_fields:
+                embed["fields"] = packed_fields
         return {"embeds": [embed]}
 
     if platform == "slack":

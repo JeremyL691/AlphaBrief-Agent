@@ -350,7 +350,8 @@ with tab_diag:
                 st.rerun()
         top_cols[1].caption(
             f"Status: {'🟢 running' if currently_enabled else '⏸ paused'} · "
-            "Jobs run in-process; pausing stops the cadence but does not affect manual actions."
+            "Pausing prevents new ticks from firing — it does **not** interrupt a job that's "
+            "already running. Use Run now or wait for the current tick to finish."
         )
 
         for job in sched_status.get("jobs", []):
@@ -508,19 +509,26 @@ with tab_diag:
         if not usage.get("enabled"):
             st.info("OpenAI is disabled (no `OPENAI_API_KEY`). News items use the regex pipeline only.")
         else:
-            metric_cols = st.columns(4)
+            metric_cols = st.columns(5)
             today = float(usage.get("today_usd") or 0.0)
             budget = float(usage.get("daily_budget_usd") or 0.0)
+            failed = int(usage.get("items_failed") or 0)
             metric_cols[0].metric("Today spent", f"${today:.4f}")
             metric_cols[1].metric("Daily budget", f"${budget:.2f}")
             metric_cols[2].metric("Items enriched", usage.get("items_today", 0))
-            metric_cols[3].metric("Skipped (budget)", usage.get("items_skipped_budget", 0))
+            metric_cols[3].metric("Failed", failed)
+            metric_cols[4].metric("Skipped (budget)", usage.get("items_skipped_budget", 0))
             if budget > 0:
                 st.progress(min(1.0, today / budget) if budget else 0.0)
             if today >= budget and budget > 0:
                 st.warning(
                     "Daily budget exhausted — remaining items will be enriched again tomorrow "
                     "(or raise `ALPHABRIEF_AI_DAILY_BUDGET_USD` in .env)."
+                )
+            if failed > 0:
+                st.warning(
+                    f"{failed} item(s) failed enrichment. Common cause: `OPENAI_MODEL` is set to a "
+                    "name OpenAI doesn't recognize. Check `data/logs/alphabrief.log` for the exact API error."
                 )
 
     st.markdown("---")

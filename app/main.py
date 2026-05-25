@@ -358,6 +358,9 @@ def ai_usage(db: Session = Depends(get_db)) -> AiUsageSummary:
         .filter(NewsItem.enrichment_status == "done")
         .count()
     )
+    items_failed = (
+        db.query(NewsItem).filter(NewsItem.enrichment_status == "failed").count()
+    )
     items_skipped_budget = (
         db.query(NewsItem).filter(NewsItem.enrichment_status == "skipped_budget").count()
     )
@@ -368,6 +371,7 @@ def ai_usage(db: Session = Depends(get_db)) -> AiUsageSummary:
         today_usd=today_usd,
         daily_budget_usd=settings.ai_daily_budget_usd,
         items_today=items_today,
+        items_failed=items_failed,
         items_skipped_budget=items_skipped_budget,
         items_skipped_no_key=items_skipped_no_key,
         enabled=settings.openai_enabled,

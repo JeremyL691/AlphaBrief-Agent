@@ -98,13 +98,18 @@ def api_delete(path: str):
 
 
 def importance_stars(value: Any) -> str:
-    """Render an integer 0-5 as a star rating string."""
+    """Render an integer 0-5 as a star rating string.
+
+    Un-enriched articles render as five empty stars (☆☆☆☆☆) instead of an empty string —
+    this keeps the column visually consistent and lets Streamlit's string-sort behave
+    sensibly (empty < ★ would put unenriched at the top, which isn't what users expect).
+    """
     if value is None:
-        return ""
+        return "☆☆☆☆☆"
     try:
         n = max(0, min(5, int(value)))
     except (TypeError, ValueError):
-        return ""
+        return "☆☆☆☆☆"
     return "★" * n + "☆" * (5 - n)
 
 

@@ -207,6 +207,7 @@ class AiUsageSummary(BaseModel):
     today_usd: float
     daily_budget_usd: float
     items_today: int
+    items_failed: int
     items_skipped_budget: int
     items_skipped_no_key: int
     enabled: bool

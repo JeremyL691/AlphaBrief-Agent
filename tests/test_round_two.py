@@ -70,6 +70,36 @@ def test_scheduler_status_endpoint():
     assert len(body["jobs"]) == 3
 
 
+def test_cron_trigger_uses_local_timezone():
+    """Regression: the daily briefing must fire at local HH:MM, not UTC.
+
+    APScheduler's CronTrigger uses the trigger's own timezone, not the scheduler's.
+    We previously forgot to pass timezone= to CronTrigger, causing 08:00 to fire at
+    16:00 in UTC+8.
+    """
+    from datetime import UTC
+
+    from app.scheduler import _trigger_for_cron
+
+    trigger = _trigger_for_cron("08:00")
+    # CronTrigger stores the timezone on `timezone` attribute (pytz/zoneinfo)
+    assert trigger.timezone is not None
+    tz_name = str(trigger.timezone)
+    # When tzlocal is installed and the machine is not on UTC, the trigger must
+    # not silently fall back to UTC.
+    try:
+        from tzlocal import get_localzone
+
+        local_name = str(get_localzone())
+        assert tz_name == local_name, (
+            f"CronTrigger timezone is {tz_name!r} but local zone is {local_name!r} — "
+            "daily briefings will fire at the wrong hour."
+        )
+    except ImportError:
+        # No tzlocal — fallback should still be UTC, not unset
+        assert trigger.timezone == UTC
+
+
 # ---------- Notifications: platform formatting ----------
 
 def test_format_for_platform_discord():

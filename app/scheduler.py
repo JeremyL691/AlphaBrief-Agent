@@ -25,9 +25,20 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.database import SessionLocal
+from app.models import utc_now
 from app.services import app_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _local_tz():
+    """Return the user's local tzinfo, falling back to UTC if tzlocal is unavailable."""
+    try:
+        from tzlocal import get_localzone
+        return get_localzone()
+    except Exception:
+        from datetime import UTC
+        return UTC
 
 
 # --- Settings keys ---
@@ -78,7 +89,7 @@ def _single_flight(job_id: str, fn: Callable[[], dict[str, Any]]) -> None:
         info.last_status = "skipped"
         info.last_summary = "previous run still in progress"
         return
-    info.last_started_at = datetime.utcnow()
+    info.last_started_at = utc_now()
     try:
         result = fn() or {}
         info.last_status = "ok"
@@ -89,7 +100,7 @@ def _single_flight(job_id: str, fn: Callable[[], dict[str, Any]]) -> None:
         info.last_summary = str(exc)[:200]
         logger.warning("Job %s failed: %s", job_id, exc, exc_info=True)
     finally:
-        info.last_finished_at = datetime.utcnow()
+        info.last_finished_at = utc_now()
         lock.release()
 
 
@@ -163,7 +174,12 @@ def _trigger_for_minutes(job_id: str, minutes: int) -> IntervalTrigger:
 
 
 def _trigger_for_cron(cron_str: str) -> CronTrigger:
-    """Parse 'HH:MM' (24-hour, local time) to a CronTrigger."""
+    """Parse 'HH:MM' (24-hour, **local time**) to a CronTrigger.
+
+    Critical: APScheduler uses the trigger's timezone, not the scheduler's, when computing
+    next run. So we pass the user's local tz explicitly — otherwise "08:00" would fire at
+    08:00 UTC, which is 16:00 in Asia/Shanghai etc.
+    """
     try:
         hh, mm = cron_str.strip().split(":")
         hour = int(hh)
@@ -173,7 +189,7 @@ def _trigger_for_cron(cron_str: str) -> CronTrigger:
     except (ValueError, AttributeError):
         logger.warning("Invalid cron %r — falling back to %s", cron_str, DEFAULT_BRIEFING_CRON)
         hour, minute = 8, 0
-    return CronTrigger(hour=hour, minute=minute)
+    return CronTrigger(hour=hour, minute=minute, timezone=_local_tz())
 
 
 def register_jobs(scheduler: BackgroundScheduler) -> None:
