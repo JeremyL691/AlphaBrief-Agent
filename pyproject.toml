@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphabrief-agent"
+version = "0.1.0"
+description = "Local-first crypto market and news intelligence agent."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "ccxt>=4.4.0",
+  "fastapi>=0.115",
+  "feedparser>=6.0.11",
+  "openai>=1.0.0",
+  "pandas>=2.2",
+  "python-dotenv>=1.0",
+  "requests>=2.32",
+  "sqlalchemy>=2.0",
+  "streamlit>=1.45",
+  "tzlocal>=5.2",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "pytest>=8.2",
+  "ruff>=0.6",
+]
+
+[tool.setuptools]
+packages = [
+  "app",
+  "app.market",
+  "app.news",
+  "app.services",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "E501"]
+
+[tool.pytest.ini_options]
+addopts = "-q"

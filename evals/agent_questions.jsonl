@@ -1,0 +1,20 @@
+{"question":"Generate a BTC briefing for the last 24 hours.","expected_tools":["fetch_market_snapshot","calculate_spreads","search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"Generate an ETH briefing for the last 12 hours.","expected_tools":["fetch_market_snapshot","calculate_spreads","search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"Show the latest BTC/USDT quotes across Binance and OKX.","expected_tools":["fetch_market_snapshot"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Show the latest ETH/USDT quotes across Binance and OKX.","expected_tools":["fetch_market_snapshot"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Which exchange has the best BTC ask right now?","expected_tools":["fetch_market_snapshot"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Which exchange has the best ETH ask right now?","expected_tools":["fetch_market_snapshot"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Find BTC news from the last 6 hours.","expected_tools":["search_recent_news"],"must_have_citation":true,"must_include_disclaimer":false}
+{"question":"Find ETH news from the last 24 hours.","expected_tools":["search_recent_news"],"must_have_citation":true,"must_include_disclaimer":false}
+{"question":"Did any BTC arbitrage candidates exceed the configured threshold?","expected_tools":["calculate_spreads","send_alert"],"must_have_citation":false,"must_include_disclaimer":true}
+{"question":"Did any ETH arbitrage candidates exceed the configured threshold?","expected_tools":["calculate_spreads","send_alert"],"must_have_citation":false,"must_include_disclaimer":true}
+{"question":"Summarize the most relevant BTC headlines with sources.","expected_tools":["search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"Summarize the most relevant ETH headlines with sources.","expected_tools":["search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"What happened to BTC spreads in the last 12 hours?","expected_tools":["fetch_market_snapshot","calculate_spreads","search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"What happened to ETH spreads in the last 12 hours?","expected_tools":["fetch_market_snapshot","calculate_spreads","search_recent_news","generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"Show spread history for BTC/USDT.","expected_tools":["calculate_spreads"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Show spread history for ETH/USDT.","expected_tools":["calculate_spreads"],"must_have_citation":false,"must_include_disclaimer":false}
+{"question":"Generate a market note for BTC even if there is no OpenAI key.","expected_tools":["generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"Generate a market note for ETH even if there is no OpenAI key.","expected_tools":["generate_market_briefing"],"must_have_citation":true,"must_include_disclaimer":true}
+{"question":"List recent alerts for BTC.","expected_tools":["send_alert"],"must_have_citation":false,"must_include_disclaimer":true}
+{"question":"List recent alerts for ETH.","expected_tools":["send_alert"],"must_have_citation":false,"must_include_disclaimer":true}

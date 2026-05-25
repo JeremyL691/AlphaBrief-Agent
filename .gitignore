@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local runtime data — never check in user databases or logs
+data/*.db
+data/*.db-journal
+data/logs/
+reports/*.md
+!reports/sample_daily_briefing.md
+
+# Local env
+.env
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
