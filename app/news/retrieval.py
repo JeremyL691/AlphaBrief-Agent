@@ -97,7 +97,7 @@ def _score_item(item: NewsItem, terms: list[str], now: datetime) -> float:
     freshness_bonus = max(0.2, 2.0 - math.log1p(age_hours))
     source_weight = SOURCE_WEIGHTS.get(item.feed_id, 0.7)
 
-    return (
+    base = (
         (title_hits * 5.0)
         + (summary_hits * 3.0)
         + (clean_hits * 1.0)
@@ -105,6 +105,10 @@ def _score_item(item: NewsItem, terms: list[str], now: datetime) -> float:
         + freshness_bonus
         + source_weight
     )
+    # AI importance bonus — only kicks in when the article has been enriched.
+    # We treat un-enriched items as 2/5 so the regex pipeline isn't disadvantaged.
+    importance = item.ai_importance if item.ai_importance is not None else 2
+    return base + (importance * 0.6)
 
 
 def _rank_candidates(items: list[NewsItem], symbol: str | None, entity: str | None, query: str | None, limit: int) -> list[NewsItem]:

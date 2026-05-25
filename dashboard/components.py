@@ -91,6 +91,23 @@ def api_post(path: str, payload: dict | None = None):
     return response.json()
 
 
+def api_delete(path: str):
+    response = requests.delete(f"{API_BASE_URL}{path}", timeout=30)
+    response.raise_for_status()
+    return response.json() if response.content else {}
+
+
+def importance_stars(value: Any) -> str:
+    """Render an integer 0-5 as a star rating string."""
+    if value is None:
+        return ""
+    try:
+        n = max(0, min(5, int(value)))
+    except (TypeError, ValueError):
+        return ""
+    return "★" * n + "☆" * (5 - n)
+
+
 def safe_call(fn: Callable, *, friendly_msg: str, retry_label: str = "Retry"):
     """Run an API call, render friendly inline error + retry button on failure.
 
@@ -111,28 +128,39 @@ def safe_call(fn: Callable, *, friendly_msg: str, retry_label: str = "Retry"):
 
 def news_dataframe(items: list[dict]) -> tuple[pd.DataFrame, dict]:
     if not items:
-        return pd.DataFrame(columns=["Published", "Source", "Title", "Link", "Entities"]), {}
+        return pd.DataFrame(
+            columns=["Importance", "Published", "Source", "Title", "Summary", "Link", "Entities"]
+        ), {}
     rows = []
     for item in items:
-        entities_raw = item.get("entities_json") or "[]"
+        # Prefer AI entities when available, otherwise fall back to regex ones.
+        ai_entities_raw = item.get("ai_entities_json")
+        entities_raw = ai_entities_raw if ai_entities_raw else (item.get("entities_json") or "[]")
         try:
             entities = json.loads(entities_raw) if isinstance(entities_raw, str) else (entities_raw or [])
         except json.JSONDecodeError:
             entities = []
+        summary = (item.get("ai_summary") or item.get("summary") or "").replace("\n", " ").strip()
+        if len(summary) > 200:
+            summary = summary[:197].rstrip() + "..."
         rows.append(
             {
+                "Importance": importance_stars(item.get("ai_importance")),
                 "Published": _to_local(item.get("published_at") or item.get("fetched_at")),
                 "Source": item.get("source_name", ""),
                 "Title": item.get("title", ""),
+                "Summary": summary,
                 "Link": item.get("url", ""),
                 "Entities": ", ".join(entities) if entities else "",
             }
         )
     df = pd.DataFrame(rows)
     column_config = {
+        "Importance": st.column_config.TextColumn("★", width="small"),
         "Published": st.column_config.DatetimeColumn("Published", format="YYYY-MM-DD HH:mm"),
         "Link": st.column_config.LinkColumn("Link", display_text="open ↗"),
-        "Title": st.column_config.TextColumn("Title", width="large"),
+        "Title": st.column_config.TextColumn("Title", width="medium"),
+        "Summary": st.column_config.TextColumn("Summary", width="large"),
         "Source": st.column_config.TextColumn("Source", width="small"),
         "Entities": st.column_config.TextColumn("Entities", width="medium"),
     }

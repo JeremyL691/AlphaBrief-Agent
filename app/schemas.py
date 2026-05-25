@@ -90,6 +90,10 @@ class NewsItemRead(BaseModel):
     summary: str
     clean_text: str
     entities_json: str
+    ai_summary: str | None = None
+    ai_importance: int | None = None
+    ai_entities_json: str | None = None
+    enrichment_status: str = "pending"
 
     model_config = {"from_attributes": True}
 
@@ -121,5 +125,88 @@ class AlertRead(BaseModel):
     message: str
     trigger_data_json: str
     created_at: datetime
+    delivered_at: datetime | None = None
+    delivery_error: str = ""
 
     model_config = {"from_attributes": True}
+
+
+# ---- Scheduler ----
+
+class SchedulerJobRead(BaseModel):
+    id: str
+    name: str
+    next_run_at: datetime | None
+    last_started_at: datetime | None
+    last_finished_at: datetime | None
+    last_status: str
+    last_summary: str
+
+
+class SchedulerStatusRead(BaseModel):
+    enabled: bool
+    market_refresh_minutes: int
+    news_ingest_minutes: int
+    daily_briefing_cron: str
+    jobs: list[SchedulerJobRead]
+
+
+class SchedulerEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class SchedulerJobSettingsRequest(BaseModel):
+    minutes: int | None = None  # for interval-based jobs
+    cron: str | None = None  # for daily_briefing
+
+
+# ---- Notifications ----
+
+class NotificationChannelRead(BaseModel):
+    id: int
+    kind: str
+    name: str
+    url: str
+    platform: str
+    enabled: bool
+    created_at: datetime
+    last_success_at: datetime | None
+    last_error: str
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationChannelCreateRequest(BaseModel):
+    name: str = Field(default="", max_length=128)
+    url: str = Field(min_length=8)
+    platform: str = Field(default="auto", pattern="^(auto|discord|slack|generic)$")
+    enabled: bool = True
+
+
+class NotificationLogRead(BaseModel):
+    id: int
+    channel_id: int
+    target_kind: str
+    target_id: int | None
+    status_code: int | None
+    error: str
+    sent_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationTestResult(BaseModel):
+    channel_id: int
+    status_code: int | None
+    error: str
+
+
+# ---- AI usage ----
+
+class AiUsageSummary(BaseModel):
+    today_usd: float
+    daily_budget_usd: float
+    items_today: int
+    items_skipped_budget: int
+    items_skipped_no_key: int
+    enabled: bool

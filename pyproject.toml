@@ -9,10 +9,12 @@ description = "Local-first crypto market and news intelligence agent."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "apscheduler>=3.10",
   "beautifulsoup4>=4.12",
   "ccxt>=4.4.0",
   "fastapi>=0.115",
   "feedparser>=6.0.11",
+  "markdown>=3.6",
   "openai>=1.0.0",
   "pandas>=2.2",
   "python-dotenv>=1.0",

@@ -29,7 +29,10 @@ class StubNews:
         self.title = "Bitcoin ETF flows remain strong"
         self.source_name = "CoinDesk"
         self.url = "https://example.com/story"
+        self.summary = "ETF inflows hit a multi-week high."
         self.entities_json = json.dumps(["BTC", "ETF", "FED"])
+        self.ai_summary = None
+        self.ai_importance = None
 
 
 def test_deterministic_briefing_contains_required_sections():

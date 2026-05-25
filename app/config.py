@@ -85,6 +85,10 @@ class Settings:
     log_level: str = os.getenv("ALPHABRIEF_LOG_LEVEL", "INFO")
     tick_retention_days: int = int(os.getenv("ALPHABRIEF_TICK_RETENTION_DAYS", "7"))
     news_retention_days: int = int(os.getenv("ALPHABRIEF_NEWS_RETENTION_DAYS", "30"))
+    # AI enrichment (round 2)
+    ai_daily_budget_usd: float = float(os.getenv("ALPHABRIEF_AI_DAILY_BUDGET_USD", "1.0"))
+    ai_batch_size: int = int(os.getenv("ALPHABRIEF_AI_BATCH_SIZE", "5"))
+    ai_enrich_per_run: int = int(os.getenv("ALPHABRIEF_AI_ENRICH_PER_RUN", "30"))
 
     @property
     def data_dir(self) -> Path:

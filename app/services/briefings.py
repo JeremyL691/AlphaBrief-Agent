@@ -62,7 +62,15 @@ def _format_news_drivers(news_items) -> list[str]:
         return ["No relevant recent news was retrieved for this symbol and time window."]
     lines = []
     for index, item in enumerate(news_items[:5], start=1):
-        lines.append(f"- [{index}] {item.title} ({item.source_name})")
+        # Prefer the LLM-written summary when available; fall back to the auto-extracted one.
+        summary = (getattr(item, "ai_summary", None) or item.summary or "").strip()
+        summary = summary.replace("\n", " ")
+        if summary and len(summary) > 220:
+            summary = summary[:217].rstrip() + "..."
+        if summary:
+            lines.append(f"- [{index}] **{item.title}** ({item.source_name}) — {summary}")
+        else:
+            lines.append(f"- [{index}] {item.title} ({item.source_name})")
     return lines
 
 

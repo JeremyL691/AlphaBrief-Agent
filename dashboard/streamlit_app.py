@@ -13,6 +13,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dashboard.components import (  # noqa: E402
     API_BASE_URL,
     alerts_dataframe,
+    api_delete,
     api_get,
     api_post,
     briefings_history_dataframe,
@@ -276,6 +277,21 @@ with tab_brief:
         mode_badge = "🤖 AI-enhanced" if latest_briefing.get("openai_used") else "📋 Deterministic fallback"
         st.caption(f"{mode_badge} · {friendly_time(latest_briefing.get('created_at'))}")
         st.markdown(latest_briefing["content_markdown"])
+        action_cols = st.columns([1, 1, 4])
+        bid = latest_briefing.get("id")
+        if bid is not None:
+            action_cols[0].download_button(
+                "⬇ Download .md",
+                data=latest_briefing.get("content_markdown") or "",
+                file_name=f"alphabrief-{latest_briefing.get('symbol', '').replace('/', '-')}-{bid}.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+            action_cols[1].link_button(
+                "🖨 Print view",
+                url=f"{API_BASE_URL}/briefings/{bid}/print",
+                use_container_width=True,
+            )
 
     st.markdown("---")
     st.subheader("History")
@@ -296,11 +312,220 @@ with tab_brief:
                 widget_key = f"briefing_pick_{hash(tuple(option_keys)) & 0xFFFF}"
                 pick = st.selectbox("Select", option_keys, index=0, key=widget_key)
                 if pick:
-                    st.markdown(options[pick]["content_markdown"])
+                    picked = options[pick]
+                    pid = picked.get("id")
+                    st.markdown(picked["content_markdown"])
+                    if pid is not None:
+                        export_cols = st.columns([1, 1, 4])
+                        export_cols[0].download_button(
+                            "⬇ Download .md",
+                            data=picked.get("content_markdown") or "",
+                            file_name=f"alphabrief-{picked.get('symbol', '').replace('/', '-')}-{pid}.md",
+                            mime="text/markdown",
+                            key=f"dl_{pid}",
+                            use_container_width=True,
+                        )
+                        export_cols[1].link_button(
+                            "🖨 Print view",
+                            url=f"{API_BASE_URL}/briefings/{pid}/print",
+                            use_container_width=True,
+                        )
 
 
 # ------------------------ Diagnostics ------------------------
 with tab_diag:
+    # ---------- Background jobs (S3) ----------
+    st.subheader("Background jobs")
+    sched_status, ok = safe_call(lambda: api_get("/scheduler/status"), friendly_msg="Could not load scheduler")
+    if ok and sched_status:
+        top_cols = st.columns([1, 3])
+        currently_enabled = sched_status.get("enabled", True)
+        toggle_label = "⏸ Pause scheduler" if currently_enabled else "▶ Resume scheduler"
+        if top_cols[0].button(toggle_label, use_container_width=True, key="sched_toggle"):
+            _, ok2 = safe_call(
+                lambda: api_post("/scheduler/enabled", {"enabled": not currently_enabled}),
+                friendly_msg="Could not toggle scheduler",
+            )
+            if ok2:
+                st.rerun()
+        top_cols[1].caption(
+            f"Status: {'🟢 running' if currently_enabled else '⏸ paused'} · "
+            "Jobs run in-process; pausing stops the cadence but does not affect manual actions."
+        )
+
+        for job in sched_status.get("jobs", []):
+            with st.container(border=True):
+                job_id = job["id"]
+                head_cols = st.columns([3, 2, 1])
+                last_status_emoji = {"ok": "✓", "error": "✗", "skipped": "↷"}.get(job.get("last_status", ""), "·")
+                head_cols[0].markdown(f"**{job['name']}**  `{job_id}`")
+                next_at = relative_time(job.get("next_run_at"))
+                last_at = relative_time(job.get("last_finished_at"))
+                head_cols[1].caption(f"Next run: {next_at} · Last: {last_at} {last_status_emoji}")
+                if head_cols[2].button("Run now", key=f"run_{job_id}", use_container_width=True):
+                    _, ok2 = safe_call(
+                        lambda jid=job_id: api_post(f"/scheduler/jobs/{jid}/run"),
+                        friendly_msg=f"Could not trigger {job_id}",
+                    )
+                    if ok2:
+                        st.toast(f"Triggered {job_id}")
+                        st.rerun()
+
+                summary = job.get("last_summary") or ""
+                if summary:
+                    st.caption(f"Last result: {summary}")
+
+                edit_cols = st.columns([2, 1])
+                if job_id == "daily_briefing":
+                    new_cron = edit_cols[0].text_input(
+                        "Schedule (HH:MM, local)",
+                        value=sched_status.get("daily_briefing_cron", "08:00"),
+                        key=f"cron_{job_id}",
+                    )
+                    if edit_cols[1].button("Save", key=f"save_{job_id}", use_container_width=True):
+                        _, ok2 = safe_call(
+                            lambda jid=job_id, c=new_cron: api_post(
+                                f"/scheduler/jobs/{jid}/settings", {"cron": c}
+                            ),
+                            friendly_msg="Could not save schedule",
+                        )
+                        if ok2:
+                            st.rerun()
+                else:
+                    key_field = "market_refresh_minutes" if job_id == "market_refresh" else "news_ingest_minutes"
+                    current_minutes = int(sched_status.get(key_field, 30))
+                    new_minutes = edit_cols[0].number_input(
+                        "Interval (minutes)", min_value=1, max_value=1440,
+                        value=current_minutes, key=f"min_{job_id}",
+                    )
+                    if edit_cols[1].button("Save", key=f"save_{job_id}", use_container_width=True):
+                        _, ok2 = safe_call(
+                            lambda jid=job_id, m=new_minutes: api_post(
+                                f"/scheduler/jobs/{jid}/settings", {"minutes": int(m)}
+                            ),
+                            friendly_msg="Could not save schedule",
+                        )
+                        if ok2:
+                            st.rerun()
+
+    st.markdown("---")
+
+    # ---------- Notification channels (N3) ----------
+    st.subheader("Notification channels (webhooks)")
+    st.caption("Add a Discord/Slack/generic webhook URL. AlphaBrief auto-detects the format.")
+
+    channels, ok = safe_call(
+        lambda: api_get("/notifications/channels"), friendly_msg="Could not load channels"
+    )
+    if ok and channels is not None:
+        if channels:
+            for ch in channels:
+                with st.container(border=True):
+                    head = st.columns([3, 1, 1, 1])
+                    label = ch["name"] or "(unnamed)"
+                    health_chip = "🟢" if ch.get("last_success_at") else ("⚪" if not ch.get("last_error") else "🔴")
+                    head[0].markdown(f"{health_chip} **{label}** · platform: `{ch['platform']}` · `{ch['url'][:60]}...`")
+                    head[1].caption(f"Last ok: {relative_time(ch.get('last_success_at'))}")
+                    if head[2].button("Test", key=f"test_ch_{ch['id']}", use_container_width=True):
+                        with st.spinner("Sending test..."):
+                            result, ok2 = safe_call(
+                                lambda cid=ch["id"]: api_post(f"/notifications/channels/{cid}/test"),
+                                friendly_msg="Could not reach the API to send test",
+                            )
+                        if ok2 and result is not None:
+                            if result.get("error"):
+                                st.error(f"Test failed: {result['error']}")
+                            else:
+                                st.success(f"Test sent (HTTP {result.get('status_code')})")
+                            st.rerun()
+                    if head[3].button("Delete", key=f"del_ch_{ch['id']}", use_container_width=True):
+                        _, ok2 = safe_call(
+                            lambda cid=ch["id"]: api_delete(f"/notifications/channels/{cid}"),
+                            friendly_msg="Could not delete channel",
+                        )
+                        if ok2:
+                            st.rerun()
+                    if ch.get("last_error"):
+                        st.caption(f"Last error: {ch['last_error'][:140]}")
+        else:
+            st.info("No channels yet. Add one below.")
+
+        with st.expander("➕ Add webhook"):
+            with st.form("add_channel", clear_on_submit=True):
+                name = st.text_input("Display name", placeholder="My Discord channel")
+                url = st.text_input("Webhook URL", placeholder="https://discord.com/api/webhooks/...")
+                platform = st.selectbox("Platform", ["auto", "discord", "slack", "generic"], index=0)
+                enabled = st.checkbox("Enabled", value=True)
+                if st.form_submit_button("Add channel", use_container_width=True):
+                    if not url.strip():
+                        st.error("URL is required.")
+                    else:
+                        _, ok2 = safe_call(
+                            lambda: api_post(
+                                "/notifications/channels",
+                                {
+                                    "name": name.strip(),
+                                    "url": url.strip(),
+                                    "platform": platform,
+                                    "enabled": enabled,
+                                },
+                            ),
+                            friendly_msg="Could not add channel",
+                        )
+                        if ok2:
+                            st.rerun()
+
+    with st.expander("Recent deliveries"):
+        logs, ok = safe_call(
+            lambda: api_get("/notifications/log", params={"limit": 20}),
+            friendly_msg="Could not load delivery log",
+        )
+        if ok and logs is not None:
+            if logs:
+                import pandas as _pd
+                rows = []
+                for entry in logs:
+                    rows.append(
+                        {
+                            "Sent": relative_time(entry.get("sent_at")),
+                            "Channel": entry.get("channel_id"),
+                            "Kind": entry.get("target_kind"),
+                            "Target id": entry.get("target_id"),
+                            "HTTP": entry.get("status_code"),
+                            "Error": (entry.get("error") or "")[:80],
+                        }
+                    )
+                st.dataframe(_pd.DataFrame(rows), width="stretch", hide_index=True)
+            else:
+                st.caption("No deliveries yet.")
+
+    st.markdown("---")
+
+    # ---------- AI usage (A4) ----------
+    st.subheader("AI enrichment")
+    usage, ok = safe_call(lambda: api_get("/ai/usage"), friendly_msg="Could not load AI usage")
+    if ok and usage is not None:
+        if not usage.get("enabled"):
+            st.info("OpenAI is disabled (no `OPENAI_API_KEY`). News items use the regex pipeline only.")
+        else:
+            metric_cols = st.columns(4)
+            today = float(usage.get("today_usd") or 0.0)
+            budget = float(usage.get("daily_budget_usd") or 0.0)
+            metric_cols[0].metric("Today spent", f"${today:.4f}")
+            metric_cols[1].metric("Daily budget", f"${budget:.2f}")
+            metric_cols[2].metric("Items enriched", usage.get("items_today", 0))
+            metric_cols[3].metric("Skipped (budget)", usage.get("items_skipped_budget", 0))
+            if budget > 0:
+                st.progress(min(1.0, today / budget) if budget else 0.0)
+            if today >= budget and budget > 0:
+                st.warning(
+                    "Daily budget exhausted — remaining items will be enriched again tomorrow "
+                    "(or raise `ALPHABRIEF_AI_DAILY_BUDGET_USD` in .env)."
+                )
+
+    st.markdown("---")
+
+    # ---------- Existing diagnostics ----------
     st.subheader("Data source health")
     if health_rows:
         rows = []
