@@ -63,6 +63,10 @@ def _csv_env(name: str, default: tuple[str, ...]) -> list[str]:
     return values or list(default)
 
 
+def derive_api_base_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}"
+
+
 @dataclass(slots=True)
 class Settings:
     project_name: str = "AlphaBrief Agent"
@@ -109,7 +113,7 @@ class Settings:
 
     @property
     def api_base_url(self) -> str:
-        return os.getenv("ALPHABRIEF_API_BASE_URL", f"http://{self.api_host}:{self.api_port}")
+        return derive_api_base_url(self.api_host, self.api_port)
 
     @property
     def dashboard_url(self) -> str:
@@ -126,3 +130,9 @@ class Settings:
 
 
 settings = Settings()
+
+
+def validate_supported_symbol(symbol: str) -> str:
+    if symbol not in settings.symbols:
+        raise ValueError(f"Unsupported symbol: {symbol}. Supported symbols: {', '.join(settings.symbols)}")
+    return symbol

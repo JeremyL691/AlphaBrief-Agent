@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.config import validate_supported_symbol
 
 
 class SourceHealthRead(BaseModel):
@@ -31,6 +33,9 @@ class HealthRead(BaseModel):
     latest_briefing_at: datetime | None
     record_counts: dict[str, int]
     source_health: list[SourceHealthRead] = []
+    scheduler: dict[str, str | bool | int] = {}
+    notifications: dict[str, int] = {}
+    enrichment: dict[str, int | bool] = {}
 
 
 class MarketRefreshResponse(BaseModel):
@@ -99,9 +104,14 @@ class NewsItemRead(BaseModel):
 
 
 class BriefingGenerateRequest(BaseModel):
-    symbol: str = Field(pattern="^(BTC/USDT|ETH/USDT)$")
+    symbol: str
     time_window: str = Field(pattern="^(6h|12h|24h|7d)$")
     focus_query: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str) -> str:
+        return validate_supported_symbol(value)
 
 
 class BriefingRead(BaseModel):
@@ -137,8 +147,11 @@ class SchedulerJobRead(BaseModel):
     id: str
     name: str
     next_run_at: datetime | None
+    current_state: str
     last_started_at: datetime | None
     last_finished_at: datetime | None
+    last_success_at: datetime | None = None
+    last_error_at: datetime | None = None
     last_status: str
     last_summary: str
 
@@ -211,3 +224,10 @@ class AiUsageSummary(BaseModel):
     items_skipped_budget: int
     items_skipped_no_key: int
     enabled: bool
+
+
+class MaintenanceCleanupResponse(BaseModel):
+    deleted_ticks: int
+    deleted_news: int
+    retention_days_ticks: int
+    retention_days_news: int

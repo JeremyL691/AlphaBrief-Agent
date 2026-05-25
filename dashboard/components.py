@@ -4,11 +4,13 @@ import json
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import requests
 import streamlit as st
+from dotenv import load_dotenv
 
 try:
     from tzlocal import get_localzone
@@ -17,7 +19,13 @@ except Exception:  # pragma: no cover - fallback
     _LOCAL_TZ = None
 
 
-API_BASE_URL = os.getenv("ALPHABRIEF_API_BASE_URL", "http://127.0.0.1:8000")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env")
+
+API_BASE_URL = (
+    f"http://{os.getenv('ALPHABRIEF_API_HOST', '127.0.0.1')}:"
+    f"{os.getenv('ALPHABRIEF_API_PORT', '8000')}"
+)
 
 
 def _to_local(value: Any) -> datetime | None:

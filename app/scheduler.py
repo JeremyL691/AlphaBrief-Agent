@@ -27,6 +27,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import utc_now
 from app.services import app_settings
+from app.services.maintenance import cleanup_old_data
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ JOB_BRIEFING = "daily_briefing"
 class JobRunInfo:
     last_started_at: datetime | None = None
     last_finished_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error_at: datetime | None = None
     last_status: str = ""  # "ok" / "error" / "skipped"
     last_summary: str = ""
 
@@ -87,16 +90,19 @@ def _single_flight(job_id: str, fn: Callable[[], dict[str, Any]]) -> None:
     if not lock.acquire(blocking=False):
         logger.info("Job %s skipped — previous run still in progress", job_id)
         info.last_status = "skipped"
+        info.last_finished_at = utc_now()
         info.last_summary = "previous run still in progress"
         return
     info.last_started_at = utc_now()
     try:
         result = fn() or {}
         info.last_status = "ok"
+        info.last_success_at = utc_now()
         info.last_summary = ", ".join(f"{k}={v}" for k, v in result.items()) or "completed"
         logger.info("Job %s ok: %s", job_id, info.last_summary)
     except Exception as exc:
         info.last_status = "error"
+        info.last_error_at = utc_now()
         info.last_summary = str(exc)[:200]
         logger.warning("Job %s failed: %s", job_id, exc, exc_info=True)
     finally:
@@ -162,6 +168,14 @@ def _run_daily_briefing() -> dict[str, Any]:
                 logger.warning("Daily briefing failed for %s", symbol, exc_info=True)
         db.commit()
         return {"generated": generated, "webhook_deliveries": delivered, "failed": failed}
+    finally:
+        db.close()
+
+
+def _run_cleanup() -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        return cleanup_old_data(db)
     finally:
         db.close()
 
@@ -257,6 +271,16 @@ def get_scheduler() -> BackgroundScheduler | None:
 
 def get_run_info(job_id: str) -> JobRunInfo:
     return _run_info.get(job_id, JobRunInfo())
+
+
+def current_state(job_id: str) -> str:
+    lock = _locks.get(job_id)
+    if lock is not None and lock.locked():
+        return "running"
+    info = get_run_info(job_id)
+    if info.last_status in {"skipped", "error"}:
+        return info.last_status
+    return "idle"
 
 
 def set_enabled(enabled: bool) -> None:

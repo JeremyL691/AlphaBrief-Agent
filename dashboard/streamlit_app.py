@@ -82,6 +82,7 @@ if health_rows:
         st.info(f"🟡 {len(degraded)} data source(s) recently flaky. See Diagnostics tab.")
 
 st.caption(
+    f"Stored ticks: {health['record_counts']['ticks']} · "
     f"Last market refresh: {relative_time(health['latest_market_refresh_at'])} · "
     f"Last news ingest: {relative_time(health['latest_news_ingest_at'])} · "
     f"Last briefing: {relative_time(health['latest_briefing_at'])}"
@@ -340,6 +341,7 @@ with tab_diag:
     if ok and sched_status:
         top_cols = st.columns([1, 3])
         currently_enabled = sched_status.get("enabled", True)
+        scheduler_summary = health.get("scheduler", {})
         toggle_label = "⏸ Pause scheduler" if currently_enabled else "▶ Resume scheduler"
         if top_cols[0].button(toggle_label, use_container_width=True, key="sched_toggle"):
             _, ok2 = safe_call(
@@ -353,6 +355,11 @@ with tab_diag:
             "Pausing prevents new ticks from firing — it does **not** interrupt a job that's "
             "already running. Use Run now or wait for the current tick to finish."
         )
+        st.caption(
+            f"Registered jobs: {scheduler_summary.get('registered_jobs', 0)} · "
+            f"Last cleanup: {relative_time(scheduler_summary.get('last_cleanup_at'))} · "
+            f"{scheduler_summary.get('cleanup_summary') or 'Cleanup has not run yet.'}"
+        )
 
         for job in sched_status.get("jobs", []):
             with st.container(border=True):
@@ -362,7 +369,10 @@ with tab_diag:
                 head_cols[0].markdown(f"**{job['name']}**  `{job_id}`")
                 next_at = relative_time(job.get("next_run_at"))
                 last_at = relative_time(job.get("last_finished_at"))
-                head_cols[1].caption(f"Next run: {next_at} · Last: {last_at} {last_status_emoji}")
+                current_state = job.get("current_state", "idle")
+                head_cols[1].caption(
+                    f"State: {current_state} · Next run: {next_at} · Last: {last_at} {last_status_emoji}"
+                )
                 if head_cols[2].button("Run now", key=f"run_{job_id}", use_container_width=True):
                     _, ok2 = safe_call(
                         lambda jid=job_id: api_post(f"/scheduler/jobs/{jid}/run"),
@@ -375,6 +385,10 @@ with tab_diag:
                 summary = job.get("last_summary") or ""
                 if summary:
                     st.caption(f"Last result: {summary}")
+                st.caption(
+                    f"Last success: {relative_time(job.get('last_success_at'))} · "
+                    f"Last error: {relative_time(job.get('last_error_at'))}"
+                )
 
                 edit_cols = st.columns([2, 1])
                 if job_id == "daily_briefing":
@@ -414,6 +428,11 @@ with tab_diag:
     # ---------- Notification channels (N3) ----------
     st.subheader("Notification channels (webhooks)")
     st.caption("Add a Discord/Slack/generic webhook URL. AlphaBrief auto-detects the format.")
+    notification_summary = health.get("notifications", {})
+    st.caption(
+        f"Enabled channels: {notification_summary.get('enabled_channels', 0)} · "
+        f"Channels with recent errors: {notification_summary.get('failing_channels', 0)}"
+    )
 
     channels, ok = safe_call(
         lambda: api_get("/notifications/channels"), friendly_msg="Could not load channels"
@@ -425,7 +444,10 @@ with tab_diag:
                     head = st.columns([3, 1, 1, 1])
                     label = ch["name"] or "(unnamed)"
                     health_chip = "🟢" if ch.get("last_success_at") else ("⚪" if not ch.get("last_error") else "🔴")
-                    head[0].markdown(f"{health_chip} **{label}** · platform: `{ch['platform']}` · `{ch['url'][:60]}...`")
+                    enabled_label = "enabled" if ch.get("enabled", True) else "disabled"
+                    head[0].markdown(
+                        f"{health_chip} **{label}** · {enabled_label} · platform: `{ch['platform']}` · `{ch['url'][:60]}...`"
+                    )
                     head[1].caption(f"Last ok: {relative_time(ch.get('last_success_at'))}")
                     if head[2].button("Test", key=f"test_ch_{ch['id']}", use_container_width=True):
                         with st.spinner("Sending test..."):
@@ -477,8 +499,29 @@ with tab_diag:
                             st.rerun()
 
     with st.expander("Recent deliveries"):
+        filter_cols = st.columns([1, 1, 2])
+        delivery_kind = filter_cols[0].selectbox(
+            "Kind",
+            ["all", "alert", "briefing", "test"],
+            index=0,
+            key="delivery_kind",
+        )
+        channel_options = ["all"] + [str(ch["id"]) for ch in (channels or [])]
+        delivery_channel = filter_cols[1].selectbox(
+            "Channel",
+            channel_options,
+            index=0,
+            key="delivery_channel",
+        )
         logs, ok = safe_call(
-            lambda: api_get("/notifications/log", params={"limit": 20}),
+            lambda: api_get(
+                "/notifications/log",
+                params={
+                    "limit": 20,
+                    "target_kind": None if delivery_kind == "all" else delivery_kind,
+                    "channel_id": None if delivery_channel == "all" else int(delivery_channel),
+                },
+            ),
             friendly_msg="Could not load delivery log",
         )
         if ok and logs is not None:
@@ -506,6 +549,12 @@ with tab_diag:
     st.subheader("AI enrichment")
     usage, ok = safe_call(lambda: api_get("/ai/usage"), friendly_msg="Could not load AI usage")
     if ok and usage is not None:
+        enrichment_summary = health.get("enrichment", {})
+        st.caption(
+            f"Pending: {enrichment_summary.get('pending', 0)} · "
+            f"Failed: {enrichment_summary.get('failed', 0)} · "
+            f"Skipped (budget): {enrichment_summary.get('skipped_budget', 0)}"
+        )
         if not usage.get("enabled"):
             st.info("OpenAI is disabled (no `OPENAI_API_KEY`). News items use the regex pipeline only.")
         else:
@@ -530,6 +579,19 @@ with tab_diag:
                     f"{failed} item(s) failed enrichment. Common cause: `OPENAI_MODEL` is set to a "
                     "name OpenAI doesn't recognize. Check `data/logs/alphabrief.log` for the exact API error."
                 )
+
+    st.markdown("---")
+
+    st.subheader("Maintenance")
+    st.caption("Run retention cleanup manually before a demo if you want to prune stale ticks and news.")
+    if st.button("Run cleanup now", use_container_width=False):
+        result, ok = safe_call(lambda: api_post("/maintenance/cleanup"), friendly_msg="Cleanup failed")
+        if ok and result is not None:
+            st.success(
+                "Cleanup complete: "
+                f"deleted {result.get('deleted_ticks', 0)} ticks and {result.get('deleted_news', 0)} news items."
+            )
+            st.rerun()
 
     st.markdown("---")
 

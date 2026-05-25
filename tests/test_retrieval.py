@@ -103,3 +103,81 @@ def test_search_recent_news_expands_symbol_terms_and_dedupes_similar_titles():
         assert "Bitcoin" in results[0].title
     finally:
         db.close()
+
+
+def test_search_recent_news_without_query_prefers_more_recent_items():
+    db = SessionLocal()
+    try:
+        db.add_all(
+            [
+                _news_item(
+                    title="Older premium source item",
+                    summary="Still relevant but older.",
+                    clean_text="Background context only.",
+                    entities=["BTC"],
+                    hours_ago=18,
+                    feed_id="the_block",
+                    suffix="older-premium",
+                ),
+                _news_item(
+                    title="More recent general update",
+                    summary="Fresh market context.",
+                    clean_text="Fresh context should win without a query.",
+                    entities=["BTC"],
+                    hours_ago=1,
+                    feed_id="ars_technica",
+                    suffix="recent-general",
+                ),
+            ]
+        )
+        db.commit()
+
+        results = search_recent_news(db, time_window="24h", limit=10)
+        assert results[0].title == "More recent general update"
+    finally:
+        db.close()
+
+
+def test_search_recent_news_matches_phrase_expansion_and_respects_published_window():
+    db = SessionLocal()
+    try:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        db.add_all(
+            [
+                NewsItem(
+                    feed_id="coindesk",
+                    source_name="coindesk",
+                    title="Federal Reserve rate path stays in focus",
+                    url="https://example.com/fed-recent",
+                    published_at=now - timedelta(hours=2),
+                    fetched_at=now - timedelta(hours=2),
+                    summary="Macro desks are watching the Federal Reserve closely.",
+                    clean_text="Federal Reserve commentary remains a key driver for risk assets.",
+                    url_hash="u-fed-recent",
+                    title_hash="t-fed-recent",
+                    content_hash="c-fed-recent",
+                    entities_json=json.dumps(["FED"]),
+                ),
+                NewsItem(
+                    feed_id="coindesk",
+                    source_name="coindesk",
+                    title="Old Federal Reserve context",
+                    url="https://example.com/fed-old",
+                    published_at=now - timedelta(hours=30),
+                    fetched_at=now,
+                    summary="Fetched recently, but published outside the window.",
+                    clean_text="This should be filtered out by the published timestamp.",
+                    url_hash="u-fed-old",
+                    title_hash="t-fed-old",
+                    content_hash="c-fed-old",
+                    entities_json=json.dumps(["FED"]),
+                ),
+            ]
+        )
+        db.commit()
+
+        results = search_recent_news(db, query="fed", time_window="24h", limit=10)
+        assert len(results) == 1
+        assert results[0].title == "Federal Reserve rate path stays in focus"
+    finally:
+        db.close()

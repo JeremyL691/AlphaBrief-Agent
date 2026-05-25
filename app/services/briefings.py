@@ -15,6 +15,16 @@ from app.services.citations import format_sources, serialize_citations
 
 logger = logging.getLogger(__name__)
 
+REQUIRED_SECTIONS = (
+    "## Executive Summary",
+    "## Market Snapshot",
+    "## Spread Opportunities",
+    "## News Drivers",
+    "## Interpretation",
+    "## Risk Notes",
+    "## Sources",
+)
+
 
 def _latest_ticks(db: Session, symbol: str, since: datetime) -> list[MarketTick]:
     all_ticks = (
@@ -34,7 +44,6 @@ def _latest_spreads(db: Session, symbol: str, since: datetime) -> list[SpreadSna
         db.query(SpreadSnapshot)
         .filter(SpreadSnapshot.symbol == symbol, SpreadSnapshot.created_at >= since)
         .order_by(desc(SpreadSnapshot.created_at), desc(SpreadSnapshot.net_spread_pct))
-        .limit(5)
         .all()
     )
 
@@ -171,6 +180,12 @@ def _maybe_synthesize(
         if not output:
             logger.warning("OpenAI returned empty output_text for model %s; using deterministic briefing", settings.openai_model)
             return markdown, False
+        if not _briefing_output_is_valid(output):
+            logger.warning(
+                "OpenAI synthesis returned invalid briefing structure for model %s; using deterministic briefing",
+                settings.openai_model,
+            )
+            return markdown, False
         return output, True
     except Exception:
         logger.warning(
@@ -179,6 +194,14 @@ def _maybe_synthesize(
             exc_info=True,
         )
         return markdown, False
+
+
+def _briefing_output_is_valid(markdown: str) -> bool:
+    if "Not financial advice." not in markdown:
+        return False
+    if any(section not in markdown for section in REQUIRED_SECTIONS):
+        return False
+    return "[" in markdown and "]" in markdown
 
 
 def generate_briefing(db: Session, symbol: str, time_window: str, focus_query: str | None = None) -> Briefing:

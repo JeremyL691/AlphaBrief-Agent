@@ -57,6 +57,15 @@ def build_process_commands(python_executable: str) -> tuple[list[str], list[str]
     return api_cmd, dashboard_cmd
 
 
+def dependencies_healthy(python_executable: str) -> bool:
+    check_cmd = [
+        python_executable,
+        "-c",
+        "import fastapi, streamlit, sqlalchemy, requests",
+    ]
+    return subprocess.run(check_cmd, capture_output=True, text=True).returncode == 0
+
+
 def wait_for_url(url: str, timeout_sec: float, label: str) -> None:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -106,7 +115,8 @@ def start_services(open_browser: bool = True) -> None:
     api_log = settings.logs_dir / f"api-{timestamp}.log"
     dashboard_log = settings.logs_dir / f"dashboard-{timestamp}.log"
     env = os.environ.copy()
-    env["ALPHABRIEF_API_BASE_URL"] = settings.api_base_url
+    env["ALPHABRIEF_API_HOST"] = settings.api_host
+    env["ALPHABRIEF_API_PORT"] = str(settings.api_port)
 
     api_cmd, dashboard_cmd = build_process_commands(sys.executable)
     api_proc = _spawn_process(api_cmd, env=env, log_path=api_log)
@@ -156,6 +166,11 @@ def main() -> int:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
     try:
+        if not dependencies_healthy(sys.executable):
+            raise RuntimeError(
+                "The virtual environment exists but required packages are missing. "
+                "Re-run the installer so AlphaBrief can repair the environment."
+            )
         start_services(open_browser=not args.no_browser)
         return 0
     except RuntimeError as exc:

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.database import Base, SessionLocal, engine, init_db
 from app.main import app
-from app.models import Alert, Briefing, NewsItem
+from app.models import Alert, Briefing, NewsItem, NotificationChannel
 from app.services import app_settings, notifications
 
 client = TestClient(app)
@@ -142,6 +142,43 @@ def test_deliver_pending_alerts_no_channels_is_noop():
         # alert still undelivered
         row = db.query(Alert).first()
         assert row.delivered_at is None
+    finally:
+        db.close()
+
+
+def test_deliver_pending_alerts_reports_partial_failure(monkeypatch):
+    class DummySession:
+        def close(self):
+            return None
+
+    db = SessionLocal()
+    try:
+        alert = Alert(alert_type="spread", symbol="BTC/USDT", severity="warning", message="m")
+        db.add_all(
+            [
+                alert,
+                NotificationChannel(name="good", url="https://example.com/good", enabled=True),
+                NotificationChannel(name="bad", url="https://example.com/bad", enabled=True),
+            ]
+        )
+        db.commit()
+
+        monkeypatch.setattr("app.services.notifications._build_webhook_session", lambda: DummySession())
+
+        def fake_send_one(db, session, channel, target_kind, target_id, generic_payload):
+            if channel.name == "good":
+                return 200, ""
+            return 500, "HTTP 500: upstream failure"
+
+        monkeypatch.setattr("app.services.notifications._send_one", fake_send_one)
+
+        result = notifications.deliver_pending_alerts(db)
+        assert result["partial_failure"] == 1
+        assert result["delivered"] == 0
+        db.commit()
+        db.refresh(alert)
+        assert alert.delivered_at is not None
+        assert "upstream failure" in alert.delivery_error
     finally:
         db.close()
 

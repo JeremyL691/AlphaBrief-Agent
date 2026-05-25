@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from app.database import Base, engine, init_db
+from app.database import Base, SessionLocal, engine, init_db
 from app.main import app
 from app.market.spreads import NormalizedTick
+from app.models import MarketTick, NewsItem
 from app.news.collector import ParsedNewsItem
 
 client = TestClient(app)
@@ -57,6 +58,9 @@ def test_market_news_and_briefing_endpoints(monkeypatch):
     assert health_before.status_code == 200
     assert health_before.json()["configured_feed_count"] >= 1
     assert health_before.json()["record_counts"]["ticks"] == 0
+    assert "scheduler" in health_before.json()
+    assert "notifications" in health_before.json()
+    assert "enrichment" in health_before.json()
 
     market_response = client.post("/market/refresh")
     assert market_response.status_code == 200
@@ -87,3 +91,56 @@ def test_market_news_and_briefing_endpoints(monkeypatch):
     assert health_body["latest_news_ingest_at"] is not None
     assert health_body["latest_briefing_at"] is not None
     assert health_body["record_counts"]["briefings"] >= 1
+
+
+def test_news_items_rejects_unsupported_symbol():
+    response = client.get("/news/items", params={"symbol": "SOL/USDT"})
+    assert response.status_code == 422
+    assert "Unsupported symbol" in response.json()["detail"]
+
+
+def test_maintenance_cleanup_endpoint_prunes_old_records():
+    now = datetime.now(UTC).replace(tzinfo=None)
+    db = SessionLocal()
+    try:
+        db.add(
+            MarketTick(
+                exchange="binance",
+                symbol="BTC/USDT",
+                bid=100.0,
+                ask=101.0,
+                last=100.5,
+                timestamp_exchange=now - timedelta(days=10),
+                timestamp_collected=now - timedelta(days=10),
+                raw_json="{}",
+            )
+        )
+        db.add(
+            NewsItem(
+                feed_id="coindesk",
+                source_name="CoinDesk",
+                title="Old headline",
+                url="https://example.com/old-headline",
+                published_at=now - timedelta(days=40),
+                fetched_at=now - timedelta(days=40),
+                summary="Old summary",
+                clean_text="Old clean text",
+                url_hash="old-url",
+                title_hash="old-title",
+                content_hash="old-content",
+                entities_json="[]",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post("/maintenance/cleanup")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted_ticks"] == 1
+    assert body["deleted_news"] == 1
+
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["scheduler"]["last_cleanup_at"]

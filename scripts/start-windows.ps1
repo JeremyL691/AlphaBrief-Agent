@@ -5,7 +5,15 @@ $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
 Set-Location $ProjectRoot
 
-if (-not (Test-Path $VenvPython)) {
+function Test-Dependencies {
+  if (-not (Test-Path $VenvPython)) {
+    return $false
+  }
+  & $VenvPython -c "import fastapi, streamlit, sqlalchemy, requests" *> $null
+  return $LASTEXITCODE -eq 0
+}
+
+if (-not (Test-Dependencies)) {
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\setup-windows.ps1")
 }
 

@@ -8,7 +8,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app import scheduler as scheduler_mod
-from app.config import settings
+from app.config import settings, validate_supported_symbol
 from app.database import get_db, init_db
 from app.logging_config import configure_logging
 from app.market.collector import refresh_market_data
@@ -28,6 +28,7 @@ from app.schemas import (
     BriefingGenerateRequest,
     BriefingRead,
     HealthRead,
+    MaintenanceCleanupResponse,
     MarketLatestResponse,
     MarketRefreshResponse,
     NewsIngestResponse,
@@ -44,6 +45,7 @@ from app.schemas import (
 from app.services import app_settings, notifications
 from app.services.briefings import generate_briefing
 from app.services.health import build_health_payload
+from app.services.maintenance import cleanup_old_data
 
 
 @asynccontextmanager
@@ -115,12 +117,17 @@ def news_ingest(db: Session = Depends(get_db)) -> NewsIngestResponse:
 
 @app.get("/news/items", response_model=list[NewsItemRead])
 def news_items(
-    symbol: str | None = Query(default=None, pattern="^(BTC/USDT|ETH/USDT)$"),
+    symbol: str | None = None,
     entity: str | None = None,
     query: str | None = None,
     time_window: str = Query(default="24h", pattern="^(6h|12h|24h|7d)$"),
     db: Session = Depends(get_db),
 ) -> list[NewsItemRead]:
+    if symbol is not None:
+        try:
+            symbol = validate_supported_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     return search_recent_news(db, symbol=symbol, entity=entity, query=query, time_window=time_window)
 
 
@@ -232,8 +239,11 @@ def _build_scheduler_status() -> SchedulerStatusRead:
                 id=job_id,
                 name=label,
                 next_run_at=next_run,
+                current_state=scheduler_mod.current_state(job_id),
                 last_started_at=info.last_started_at,
                 last_finished_at=info.last_finished_at,
+                last_success_at=info.last_success_at,
+                last_error_at=info.last_error_at,
                 last_status=info.last_status,
                 last_summary=info.last_summary,
             )
@@ -337,9 +347,21 @@ def notifications_test_channel(channel_id: int, db: Session = Depends(get_db)) -
 @app.get("/notifications/log", response_model=list[NotificationLogRead])
 def notifications_log(
     limit: int = Query(default=20, ge=1, le=200),
+    channel_id: int | None = None,
+    target_kind: str | None = Query(default=None, pattern="^(alert|briefing|test)$"),
     db: Session = Depends(get_db),
 ) -> list[NotificationLogRead]:
-    return db.query(NotificationLog).order_by(desc(NotificationLog.sent_at)).limit(limit).all()
+    query = db.query(NotificationLog)
+    if channel_id is not None:
+        query = query.filter(NotificationLog.channel_id == channel_id)
+    if target_kind is not None:
+        query = query.filter(NotificationLog.target_kind == target_kind)
+    return query.order_by(desc(NotificationLog.sent_at)).limit(limit).all()
+
+
+@app.post("/maintenance/cleanup", response_model=MaintenanceCleanupResponse)
+def maintenance_cleanup(db: Session = Depends(get_db)) -> MaintenanceCleanupResponse:
+    return MaintenanceCleanupResponse(**cleanup_old_data(db))
 
 
 # ----------------- AI usage -----------------

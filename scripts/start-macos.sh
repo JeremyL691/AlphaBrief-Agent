@@ -6,7 +6,11 @@ VENV_PY="$PROJECT_ROOT/.venv/bin/python"
 
 cd "$PROJECT_ROOT"
 
-if [ ! -x "$VENV_PY" ]; then
+deps_ok() {
+  [ -x "$VENV_PY" ] && "$VENV_PY" -c "import fastapi, streamlit, sqlalchemy, requests" >/dev/null 2>&1
+}
+
+if ! deps_ok; then
   bash "$PROJECT_ROOT/scripts/setup-macos.sh"
 fi
 

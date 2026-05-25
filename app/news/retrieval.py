@@ -73,7 +73,18 @@ def _expand_terms(symbol: str | None = None, entity: str | None = None, query: s
 
 def _term_hits(tokens: list[str], terms: list[str]) -> int:
     token_set = set(tokens)
-    return sum(1 for term in terms if term in token_set)
+    joined = " ".join(tokens)
+    hits = 0
+    for term in terms:
+        normalized = term.lower().strip()
+        if not normalized:
+            continue
+        if " " in normalized:
+            if normalized in joined:
+                hits += 1
+        elif normalized in token_set:
+            hits += 1
+    return hits
 
 
 def _build_event_signature(item: NewsItem) -> str:
@@ -116,17 +127,27 @@ def _rank_candidates(items: list[NewsItem], symbol: str | None, entity: str | No
     terms = _expand_terms(symbol=symbol, entity=entity, query=query)
     scored: list[tuple[float, NewsItem]] = []
     for item in items:
-        score = _score_item(item, terms, now) if terms else SOURCE_WEIGHTS.get(item.feed_id, 0.7)
+        score = _score_item(item, terms, now) if terms else 0.0
         scored.append((score, item))
 
-    scored.sort(
-        key=lambda pair: (
-            pair[0],
-            pair[1].published_at or pair[1].fetched_at,
-            pair[1].fetched_at,
-        ),
-        reverse=True,
-    )
+    if terms:
+        scored.sort(
+            key=lambda pair: (
+                pair[0],
+                pair[1].published_at or pair[1].fetched_at,
+                pair[1].fetched_at,
+            ),
+            reverse=True,
+        )
+    else:
+        scored.sort(
+            key=lambda pair: (
+                pair[1].published_at or pair[1].fetched_at,
+                SOURCE_WEIGHTS.get(pair[1].feed_id, 0.7),
+                pair[1].fetched_at,
+            ),
+            reverse=True,
+        )
 
     deduped: list[NewsItem] = []
     seen_signatures: set[str] = set()
@@ -152,10 +173,12 @@ def search_recent_news(
     query: str | None = None,
     limit: int = 50,
 ) -> list[NewsItem]:
+    cutoff = time_window_start(time_window)
     candidates = (
         db.query(NewsItem)
-        .filter(NewsItem.fetched_at >= time_window_start(time_window))
+        .filter(NewsItem.fetched_at >= cutoff)
         .order_by(desc(NewsItem.published_at), desc(NewsItem.fetched_at))
         .all()
     )
-    return _rank_candidates(candidates, symbol=symbol, entity=entity, query=query, limit=limit)
+    filtered = [item for item in candidates if (item.published_at or item.fetched_at) >= cutoff]
+    return _rank_candidates(filtered, symbol=symbol, entity=entity, query=query, limit=limit)

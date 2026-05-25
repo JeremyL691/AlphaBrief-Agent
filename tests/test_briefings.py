@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
-from app.services.briefings import _build_deterministic_briefing
+from app.services.briefings import _briefing_output_is_valid, _build_deterministic_briefing, _maybe_synthesize
 
 
 class StubTick:
@@ -53,3 +54,42 @@ def test_deterministic_briefing_contains_required_sections():
     assert "## Risk Notes" in markdown
     assert "## Sources" in markdown
     assert "Not financial advice." in markdown
+
+
+def test_briefing_output_validator_requires_sections_disclaimer_and_citations():
+    valid_markdown = _build_deterministic_briefing(
+        symbol="BTC/USDT",
+        time_window="24h",
+        ticks=[StubTick("binance")],
+        spreads=[StubSpread()],
+        news_items=[StubNews()],
+        focus_query="bitcoin etf",
+    )
+    assert _briefing_output_is_valid(valid_markdown) is True
+    assert _briefing_output_is_valid(valid_markdown.replace("Not financial advice.", "")) is False
+    assert _briefing_output_is_valid(valid_markdown.replace("[1]", "")) is False
+
+
+def test_maybe_synthesize_falls_back_when_openai_output_loses_required_structure(monkeypatch):
+    base_markdown = _build_deterministic_briefing(
+        symbol="BTC/USDT",
+        time_window="24h",
+        ticks=[StubTick("binance")],
+        spreads=[StubSpread()],
+        news_items=[StubNews()],
+        focus_query="bitcoin etf",
+    )
+
+    class StubClient:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+            self.responses = SimpleNamespace(
+                create=lambda **kwargs: SimpleNamespace(output_text="# Brief note\n\nThis rewrite forgot the required sections.")
+            )
+
+    monkeypatch.setattr("app.config.settings.openai_api_key", "test-key")
+    monkeypatch.setattr("app.services.briefings.OpenAI", StubClient)
+
+    output, used_openai = _maybe_synthesize(base_markdown, symbol="BTC/USDT", time_window="24h")
+    assert used_openai is False
+    assert output == base_markdown

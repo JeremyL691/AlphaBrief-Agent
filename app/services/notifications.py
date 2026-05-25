@@ -198,6 +198,7 @@ def deliver_pending_alerts(db: Session) -> dict[str, int]:
     session = _build_webhook_session()
     delivered = 0
     failed = 0
+    partial_failure = 0
     try:
         for alert in pending:
             envelope = _alert_to_envelope(alert)
@@ -211,15 +212,24 @@ def deliver_pending_alerts(db: Session) -> dict[str, int]:
                     had_success = True
             if had_success:
                 alert.delivered_at = utc_now()
-                alert.delivery_error = ""
-                delivered += 1
+                if errors:
+                    alert.delivery_error = ("; ".join(errors))[:500]
+                    partial_failure += 1
+                else:
+                    alert.delivery_error = ""
+                    delivered += 1
             else:
                 alert.delivery_error = ("; ".join(errors))[:500]
                 failed += 1
     finally:
         session.close()
 
-    return {"delivered": delivered, "failed": failed, "channels": len(channels)}
+    return {
+        "delivered": delivered,
+        "failed": failed,
+        "partial_failure": partial_failure,
+        "channels": len(channels),
+    }
 
 
 def deliver_briefing(db: Session, briefing: Briefing) -> dict[str, int]:
@@ -230,16 +240,28 @@ def deliver_briefing(db: Session, briefing: Briefing) -> dict[str, int]:
     session = _build_webhook_session()
     delivered = 0
     failed = 0
+    partial_failure = 0
     try:
+        had_success = False
+        had_error = False
         for ch in channels:
             _, err = _send_one(db, session, ch, "briefing", briefing.id, envelope)
             if err:
+                had_error = True
                 failed += 1
             else:
+                had_success = True
                 delivered += 1
     finally:
         session.close()
-    return {"delivered": delivered, "failed": failed, "channels": len(channels)}
+    if had_success and had_error:
+        partial_failure = 1
+    return {
+        "delivered": delivered,
+        "failed": failed,
+        "partial_failure": partial_failure,
+        "channels": len(channels),
+    }
 
 
 def deliver_test(db: Session, channel: NotificationChannel) -> tuple[int | None, str]:
