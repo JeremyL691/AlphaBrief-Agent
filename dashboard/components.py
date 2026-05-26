@@ -182,7 +182,7 @@ def news_dataframe(items: list[dict]) -> tuple[pd.DataFrame, dict]:
 
 def ticks_dataframe(ticks: list[dict]) -> tuple[pd.DataFrame, dict]:
     if not ticks:
-        return pd.DataFrame(columns=["Time", "Exchange", "Symbol", "Bid", "Ask", "Last", "Spread (bps)"]), {}
+        return pd.DataFrame(columns=["Time", "Exchange", "Symbol", "Bid", "Ask", "Last", "Bid-Ask (bps)"]), {}
     rows = []
     for t in ticks:
         bid = t.get("bid")
@@ -196,7 +196,7 @@ def ticks_dataframe(ticks: list[dict]) -> tuple[pd.DataFrame, dict]:
                 "Bid": bid,
                 "Ask": ask,
                 "Last": t.get("last"),
-                "Spread (bps)": round(spread_bps, 2) if spread_bps is not None else None,
+                "Bid-Ask (bps)": spread_bps,
             }
         )
     df = pd.DataFrame(rows)
@@ -205,6 +205,11 @@ def ticks_dataframe(ticks: list[dict]) -> tuple[pd.DataFrame, dict]:
         "Bid": st.column_config.NumberColumn("Bid", format="%.2f"),
         "Ask": st.column_config.NumberColumn("Ask", format="%.2f"),
         "Last": st.column_config.NumberColumn("Last", format="%.2f"),
+        "Bid-Ask (bps)": st.column_config.NumberColumn(
+            "Bid-Ask (bps)",
+            format="%.3f",
+            help="Per-exchange bid–ask spread in basis points (1 bp = 0.01%).",
+        ),
     }
     return df, column_config
 
@@ -283,23 +288,38 @@ def alerts_dataframe(items: list[dict]) -> tuple[pd.DataFrame, dict]:
 
 # -------- Chart data --------
 
-def build_price_series(ticks: list[dict]) -> pd.DataFrame:
-    """Return wide-form DataFrame indexed by time with one column per exchange (last price)."""
+def build_price_series(ticks: list[dict]) -> dict[str, pd.DataFrame]:
+    """Return a mapping of symbol -> wide DataFrame (time × exchange) of last price.
+
+    Each symbol gets its own DataFrame so BTC (~$70k) and ETH (~$2k) are not
+    forced onto a single shared y-axis (which would flatten ETH visually).
+    """
     if not ticks:
-        return pd.DataFrame()
+        return {}
     rows = []
     for t in ticks:
         ts = _to_local(t.get("timestamp_collected"))
         if ts is None:
             continue
-        rows.append({"time": ts, "exchange": t.get("exchange", ""), "last": t.get("last")})
+        rows.append(
+            {
+                "time": ts,
+                "symbol": t.get("symbol", ""),
+                "exchange": t.get("exchange", ""),
+                "last": t.get("last"),
+            }
+        )
     if not rows:
-        return pd.DataFrame()
+        return {}
     df = pd.DataFrame(rows)
-    # Round to nearest 30s so multiple exchange ticks align visually.
-    df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None).dt.floor("30s")
-    pivot = df.pivot_table(index="time", columns="exchange", values="last", aggfunc="last")
-    return pivot.sort_index()
+    # Round to nearest 5s so multiple exchange ticks from the same refresh
+    # align visually, while distinct refreshes a few seconds apart stay separate.
+    df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None).dt.floor("5s")
+    out: dict[str, pd.DataFrame] = {}
+    for symbol, sub in df.groupby("symbol"):
+        pivot = sub.pivot_table(index="time", columns="exchange", values="last", aggfunc="last")
+        out[symbol] = pivot.sort_index()
+    return out
 
 
 def build_spread_series(spreads: list[dict]) -> pd.DataFrame:
@@ -320,7 +340,9 @@ def build_spread_series(spreads: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None).dt.floor("30s")
+    # Match price-series bucketing (5s) so refreshes a few seconds apart
+    # show as distinct points on the spread chart too.
+    df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None).dt.floor("5s")
     pivot = df.pivot_table(index="time", columns="route", values="net_pct", aggfunc="max")
     return pivot.sort_index()
 

@@ -66,6 +66,45 @@ def _format_spreads(spreads: list[SpreadSnapshot]) -> list[str]:
     ]
 
 
+def _escape_markdown_inline(text: str) -> str:
+    """Escape characters that Streamlit's markdown treats specially inside a line.
+
+    `$` triggers LaTeX math mode (and silently eats everything up to the next `$`,
+    including the closing `**` of a bold span). Backticks would close a surrounding
+    bold/code span unexpectedly.
+    """
+    return (text or "").replace("\\", "\\\\").replace("`", "'").replace("$", "\\$")
+
+
+def _sanitize_title(title: str) -> str:
+    """Make a news title safe for inline-bold markdown embedding."""
+    cleaned = (title or "").strip()
+    # Drop a single unmatched opening quote if no closing one exists.
+    openers = "\"'“‘"
+    closers = "\"'”’"
+    if cleaned and cleaned[0] in openers and not any(c in cleaned[1:] for c in closers):
+        cleaned = cleaned[1:].lstrip()
+    return _escape_markdown_inline(cleaned)
+
+
+def _strip_title_prefix(summary: str, title: str) -> str:
+    """Drop a leading verbatim copy of the title (with any boilerplate prefix
+    like ``Decrypt News Markets`` in front of it) from the summary."""
+    if not summary or not title:
+        return summary
+    lower_summary = summary.lower()
+    lower_title = title.lower()
+    # If the title appears within the first ~150 chars of the summary, cut up
+    # to and including that copy. Handles both "Title …" and
+    # "<Source> News <Section> Title …" patterns.
+    search_window = lower_summary[:150]
+    idx = search_window.find(lower_title)
+    if idx != -1:
+        cut = idx + len(title)
+        return summary[cut:].lstrip(" -–—:.,") or summary
+    return summary
+
+
 def _format_news_drivers(news_items) -> list[str]:
     if not news_items:
         return ["No relevant recent news was retrieved for this symbol and time window."]
@@ -74,19 +113,25 @@ def _format_news_drivers(news_items) -> list[str]:
         # Prefer the LLM-written summary when available; fall back to the auto-extracted one.
         summary = (getattr(item, "ai_summary", None) or item.summary or "").strip()
         summary = summary.replace("\n", " ")
+        summary = _strip_title_prefix(summary, item.title or "")
         if summary and len(summary) > 220:
             summary = summary[:217].rstrip() + "..."
-        if summary:
-            lines.append(f"- [{index}] **{item.title}** ({item.source_name}) — {summary}")
+        safe_title = _sanitize_title(item.title or "")
+        safe_summary = _escape_markdown_inline(summary) if summary else ""
+        if safe_summary:
+            lines.append(f"- [{index}] **{safe_title}** ({item.source_name}) — {safe_summary}")
         else:
-            lines.append(f"- [{index}] {item.title} ({item.source_name})")
+            lines.append(f"- [{index}] {safe_title} ({item.source_name})")
     return lines
 
 
 def _build_key_takeaways(spreads: list[SpreadSnapshot], news_items) -> list[str]:
     takeaways: list[str] = []
     if spreads:
-        best = max(spreads, key=lambda item: item.net_spread_pct)
+        # Use the same top-ranked spread shown in the Spread Opportunities
+        # section so the Executive Summary and the bullet list stay consistent.
+        # spreads is already ordered desc(created_at), desc(net_spread_pct).
+        best = spreads[0]
         takeaways.append(
             f"- The strongest observed cross-exchange setup was `{best.net_spread_pct:.4f}%` net after fees, with the best route buying on `{best.buy_exchange}` and selling on `{best.sell_exchange}`."
         )

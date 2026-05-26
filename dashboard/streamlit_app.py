@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
+import altair as alt
+import pandas as pd
 import streamlit as st
 
 # Allow running `streamlit run dashboard/streamlit_app.py` from project root.
@@ -52,7 +55,11 @@ def render_setup_help(message: str) -> None:
 
 
 st.title("AlphaBrief Agent")
-st.caption("Crypto market + news intelligence — local-first")
+st.caption(
+    "Crypto market + news intelligence — local-first · "
+    "by Jeremy Liu · [github.com/JeremyL691/AlphaBrief-Agent]"
+    "(https://github.com/JeremyL691/AlphaBrief-Agent)"
+)
 
 health, ok = safe_call(lambda: api_get("/health"), friendly_msg=f"Cannot reach API at {API_BASE_URL}")
 if not ok or not health:
@@ -88,6 +95,19 @@ st.caption(
     f"Last briefing: {relative_time(health['latest_briefing_at'])}"
 )
 
+_counts = health["record_counts"]
+_is_empty = (
+    _counts.get("news", 0) == 0
+    and _counts.get("briefings", 0) == 0
+    and _counts.get("ticks", 0) < 10
+)
+if _is_empty:
+    st.info(
+        "👋 **First time here?** Head to the **Live Market** tab and click "
+        "**🚀 One-click demo** to seed the dashboard with real market history, "
+        "news, and a sample briefing (takes about 1 minute)."
+    )
+
 
 # ------------------------ Tabs ------------------------
 tab_live, tab_news, tab_brief, tab_diag = st.tabs(["📈 Live Market", "📰 News", "📝 Briefings", "🩺 Diagnostics"])
@@ -112,26 +132,69 @@ with tab_live:
             else:
                 status.update(label="Failed", state="error")
 
-    if action_cols[1].button("Run starter workflow", use_container_width=True):
-        with st.status("Running starter workflow...", expanded=True) as status:
-            status.write("1/2 Fetching market data...")
-            mkt, ok1 = safe_call(lambda: api_post("/market/refresh"), friendly_msg="Market refresh failed")
+    if action_cols[1].button(
+        "🚀 One-click demo",
+        use_container_width=True,
+        help="Seeds the dashboard end-to-end: collects a real market history, ingests news, and generates a briefing.",
+    ):
+        market_samples = 8
+        sample_interval_sec = 6.0
+        with st.status("Running one-click demo...", expanded=True) as status:
+            status.write(f"1/3 Collecting {market_samples} market snapshots to seed the chart...")
+            seeded_ticks = seeded_spreads = seeded_alerts = 0
+            mkt_ok_count = 0
+            for i in range(market_samples):
+                mkt, mkt_ok = safe_call(
+                    lambda: api_post("/market/refresh"),
+                    friendly_msg="Market refresh failed",
+                )
+                if mkt_ok:
+                    mkt_ok_count += 1
+                    seeded_ticks += mkt.get("inserted_ticks", 0)
+                    seeded_spreads += mkt.get("inserted_spreads", 0)
+                    seeded_alerts += mkt.get("inserted_alerts", 0)
+                    status.write(
+                        f"   • snapshot {i + 1}/{market_samples} → "
+                        f"{mkt.get('inserted_ticks', 0)} ticks, "
+                        f"{mkt.get('inserted_spreads', 0)} spreads"
+                    )
+                else:
+                    status.write(f"   ⚠️ snapshot {i + 1}/{market_samples} failed, continuing...")
+                if i < market_samples - 1:
+                    time.sleep(sample_interval_sec)
+            ok1 = mkt_ok_count > 0
             if ok1:
                 status.write(
-                    f"   ✓ {mkt['inserted_ticks']} ticks, {mkt['inserted_spreads']} spreads, "
-                    f"{mkt['inserted_alerts']} alerts"
+                    f"   ✓ Seeded {seeded_ticks} ticks, {seeded_spreads} spreads, "
+                    f"{seeded_alerts} alerts across {mkt_ok_count} snapshots"
                 )
-            status.write("2/2 Ingesting news feeds...")
+
+            status.write("2/3 Ingesting news feeds...")
             news, ok2 = safe_call(lambda: api_post("/news/ingest"), friendly_msg="News ingest failed")
             if ok2:
                 status.write(
                     f"   ✓ {news['inserted_items']} new items, "
                     f"{news['duplicates_skipped']} duplicates, {news.get('failed_feeds', 0)} failed feeds"
                 )
-            if ok1 and ok2:
-                status.update(label="Starter workflow complete.", state="complete")
+
+            status.write("3/3 Generating a briefing...")
+            brief, ok3 = safe_call(
+                lambda: api_post("/briefings/generate", {"symbol": "BTC/USDT", "time_window": "24h"}),
+                friendly_msg="Briefing generation failed",
+            )
+            if ok3:
+                mode = "AI" if brief.get("openai_used") else "fallback template"
+                status.write(f"   ✓ Briefing created using {mode}")
+
+            if ok1 and ok2 and ok3:
+                status.update(
+                    label="✅ Demo ready — explore the Live Market, News, and Briefings tabs.",
+                    state="complete",
+                )
+            elif ok1 or ok2 or ok3:
+                status.update(label="Demo finished with some errors. See log above.", state="error")
             else:
-                status.update(label="Starter workflow had errors.", state="error")
+                status.update(label="Demo failed. See log above.", state="error")
 
     chart_window = action_cols[2].selectbox(
         "Chart window", ["6h", "24h", "7d"], index=0, label_visibility="collapsed"
@@ -143,21 +206,50 @@ with tab_live:
         friendly_msg="Could not load market history",
     )
     if ok and history:
-        price_df = build_price_series(history["latest_ticks"])
+        price_series = build_price_series(history["latest_ticks"])
         spread_df = build_spread_series(history["latest_spreads"])
 
+        def _altair_line(df: pd.DataFrame, value_label: str, height: int) -> alt.Chart:
+            """Render a long-form line chart with a zoomed-in y-axis (not anchored at 0)."""
+            long_df = df.reset_index().melt("time", var_name="series", value_name="value").dropna()
+            return (
+                alt.Chart(long_df)
+                .mark_line(point=alt.OverlayMarkDef(size=30))
+                .encode(
+                    x=alt.X("time:T", title=None),
+                    y=alt.Y("value:Q", title=value_label, scale=alt.Scale(zero=False, nice=True)),
+                    color=alt.Color("series:N", title=None),
+                )
+                .properties(height=height)
+            )
+
         st.markdown("#### Last price by exchange")
-        if not price_df.empty:
-            st.line_chart(price_df, height=260)
+        if not price_series:
+            st.info("No price data yet — click **🚀 One-click demo** above to seed the chart.")
         else:
-            st.info("No price data yet — click **Refresh market**.")
+            max_points = max(len(df.index) for df in price_series.values())
+            price_cols = st.columns(len(price_series))
+            for col, (symbol, df) in zip(price_cols, sorted(price_series.items())):
+                with col:
+                    st.caption(f"**{symbol}**")
+                    st.altair_chart(_altair_line(df, "last price", 240), use_container_width=True)
+            if max_points < 2:
+                st.caption(
+                    "Only one snapshot collected so far — the chart needs at least two timestamps to draw a line. "
+                    "Click **🚀 One-click demo** above (or **Refresh market** a few more times) to populate it."
+                )
 
         st.markdown("#### Net spread % by route")
-        if not spread_df.empty:
-            st.line_chart(spread_df, height=200)
-            st.caption("Alert threshold: see .env `ALPHABRIEF_SPREAD_THRESHOLD_PCT` (default 0.20%).")
+        if spread_df.empty:
+            st.info("No spread data yet — click **🚀 One-click demo** above.")
+        elif len(spread_df.index) < 2:
+            st.altair_chart(_altair_line(spread_df, "net spread %", 200), use_container_width=True)
+            st.caption(
+                "Only one spread sample so far. Click **🚀 One-click demo** above to seed a real spread history."
+            )
         else:
-            st.info("No spread data yet.")
+            st.altair_chart(_altair_line(spread_df, "net spread %", 200), use_container_width=True)
+            st.caption("Alert threshold: see .env `ALPHABRIEF_SPREAD_THRESHOLD_PCT` (default 0.20%).")
 
     st.markdown("---")
     latest, ok = safe_call(lambda: api_get("/market/latest"), friendly_msg="Could not load latest market data")
@@ -274,6 +366,15 @@ with tab_brief:
                 status.update(label="Generation failed.", state="error")
 
     latest_briefing = st.session_state.get("latest_briefing")
+    if not latest_briefing:
+        # Fall back to the most recent briefing on disk so the tab is never blank
+        # when prior briefings exist.
+        recent, recent_ok = safe_call(
+            lambda: api_get("/briefings"),
+            friendly_msg="Could not load briefing history",
+        )
+        if recent_ok and recent:
+            latest_briefing = recent[0]
     if latest_briefing:
         mode_badge = "🤖 AI-enhanced" if latest_briefing.get("openai_used") else "📋 Deterministic fallback"
         st.caption(f"{mode_badge} · {friendly_time(latest_briefing.get('created_at'))}")
